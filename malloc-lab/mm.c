@@ -40,7 +40,13 @@ static inline size_t MAX(size_t a, size_t b)
     return a > b ? a : b;
 }
 
-static char *heap_listp = NULL; // 프롤로그의 bp를 가리키는 전역 스칼라 포인터
+// 헤더와 푸터를 포함하여 8의 배수로 정렬
+static inline size_t ALIGN(size_t size)
+{
+    return (size + DSIZE + 7) & ~((size_t)7);
+}
+
+static void *heap_listp = NULL; // 프롤로그의 bp를 가리키는 전역 스칼라 포인터
 
 // ======================
 // 포인터가 가리키는 워드를 읽거나 쓰는 역할을 한다. (1워드 = 4바이트 기준)
@@ -55,7 +61,7 @@ static inline unsigned int GET(const void *p)
 /// @brief 블록 메타데이터를 기록한다. PACK()과 같이 사용할 것.
 /// @param p 
 /// @param value 
-static inline void PUT(void *p, unsigned int value)
+static inline void PUT(void *p, size_t value)
 {
 	*(unsigned int *)p = value;
 }
@@ -259,7 +265,7 @@ void *mm_malloc(size_t size)
         return NULL;
     }
     
-    size_t asize = (size + 8 + 7) & ~(size_t)7;
+    size_t asize = ALIGN(size);
     asize = MAX(MIN_BLOCK, asize);
     
     void *bp = find_fit(asize);
@@ -294,7 +300,8 @@ void mm_free(void *ptr)
     coalesce(ptr);   // 반환 포인터는 사용하지 않음
 }
 
-// malloc과 free를 재활용한 재할당
+// 제자리 할당과 주소 변경이 구현된 재할당
+// TODO: 재할당 과정에서 생기는 내부 단편화 해결해보기(언젠가)
 void *mm_realloc(void *ptr, size_t size)
 {
     if (ptr == NULL)
@@ -309,7 +316,7 @@ void *mm_realloc(void *ptr, size_t size)
     }
 
     size_t csize = GET_SIZE(HDRP(ptr));
-    size_t asize = (size + 8 + 7) & ~(size_t)7;
+    size_t asize = ALIGN(size);
     asize = MAX(MIN_BLOCK, asize);
 
     // 1. 현재 블록 자체가 이미 충분히 크면 새로 할당하지 않기
