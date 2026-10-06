@@ -31,8 +31,7 @@ enum {
     WSIZE = 4,                                      // 4B: 헤더 또는 푸터 하나의 크기
     DSIZE = 8,                                      // 8B: 헤더와 푸터의 합
     MIN_BLOCK = DSIZE << 1,                         // 16B: 일반 블록의 최소 크기
-    CHUNKSIZE = 1 << 12,                            // 4096B: 기본 힙 확장량
-    TAG_MAX = (size_t)__UINT32_MAX__ & ~(size_t)7   // 4B 태그로 표현 가능한 가장 큰 8의 배수
+    CHUNKSIZE = 1 << 12                             // 4096B: 기본 힙 확장량
 };
 
 // 크기 비교: 더 큰 값을 반환
@@ -80,7 +79,7 @@ static inline size_t GET_SIZE(const void *p)
 	return (size_t)(GET(p) & ~0x7u);
 }
 
-// 가용 상태 확인
+// 가용 상태 확인: 반드시 헤더나 푸터를 가리키는 포인터를 인자로 넣을 것
 static inline unsigned int GET_ALLOC(const void *p)
 {
 	return GET(p) & 0x1u;
@@ -195,30 +194,8 @@ static void *extend_heap(size_t bytes)
         return NULL;
     }
 
-    if (bytes > __SIZE_MAX__ - 7)
-    {
-        return NULL;
-    }
-
     size_t size = (bytes + 7) & ~(size_t)7; // 8B 단위로 올림
     size = MAX(MIN_BLOCK, size);
-
-    if (size > __INT_MAX__)
-    {
-        return NULL;
-    }
-
-    size_t heap_bytes = mem_heapsize();
-
-    if (heap_bytes > TAG_MAX)
-    {
-        return NULL;
-    }
-
-    if (size > TAG_MAX - heap_bytes)
-    {
-        return NULL;
-    }
 
     void *bp = mem_sbrk((int)size);
 
@@ -282,18 +259,8 @@ void *mm_malloc(size_t size)
         return NULL;
     }
     
-    if (size > __SIZE_MAX__ - 15)
-    {
-        return NULL;
-    }
-    
     size_t asize = (size + 8 + 7) & ~(size_t)7;
     asize = MAX(MIN_BLOCK, asize);
-
-    if (asize > TAG_MAX)
-    {
-        return NULL;
-    }
     
     void *bp = find_fit(asize);
 
@@ -327,22 +294,69 @@ void mm_free(void *ptr)
     coalesce(ptr);   // 반환 포인터는 사용하지 않음
 }
 
-/*
- * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
- */
+// malloc과 free를 재활용한 재할당
 void *mm_realloc(void *ptr, size_t size)
 {
-    void *oldptr = ptr;
-    void *newptr;
-    size_t copySize;
+    if (ptr == NULL)
+    {
+        return mm_malloc(size);
+    }
 
-    newptr = mm_malloc(size);
-    if (newptr == NULL)
+    if (size == 0)
+    {
+        mm_free(ptr);
         return NULL;
-    copySize = *(size_t *)((char *)oldptr - sizeof(size_t));
+    }
+
+    size_t csize = GET_SIZE(HDRP(ptr));
+    size_t asize = (size + 8 + 7) & ~(size_t)7;
+    asize = MAX(MIN_BLOCK, asize);
+
+    // 1. 현재 블록 자체가 이미 충분히 크면 새로 할당하지 않기
+    if (csize >= asize)
+    {
+        return ptr;
+    }
+    // 2. 다음 블록이 가용 상태고, 합치기 충분하다면 제자리 확장
+    else if (!GET_ALLOC(HDRP(NEXT_BLKP(ptr))) && (csize + GET_SIZE(HDRP(NEXT_BLKP(ptr)))) >= asize)
+    {
+        char *next_block = NEXT_BLKP(ptr);
+        size_t newsize = csize + GET_SIZE(HDRP(next_block));
+        PUT(HDRP(ptr), PACK(newsize, 1));
+        PUT(FTRP(next_block), PACK(newsize, 1));
+        return ptr;
+    }
+    // 3. 그 다음 블록이 epilogue라면 heap을 확장해서 현재 블록을 늘리기
+    else if (!GET_SIZE(HDRP(NEXT_BLKP(ptr))))
+    {
+        void *nextptr = extend_heap(asize - csize);
+
+        if (!nextptr)
+        {
+            return NULL;
+        }
+
+        size_t newsize = csize + GET_SIZE(HDRP(nextptr));
+        PUT(HDRP(ptr), PACK(newsize, 1));
+        PUT(FTRP(nextptr), PACK(newsize, 1));
+        return ptr;
+    }
+
+    // 주소 변경
+    void *newptr = mm_malloc(size);
+    if (!newptr)
+    {
+        return NULL;
+    }
+
+    size_t copySize = csize - DSIZE;    // 기존 블록의 페이로드 크기
     if (size < copySize)
+    {
         copySize = size;
-    memcpy(newptr, oldptr, copySize);
-    mm_free(oldptr);
+    }
+    
+    memcpy(newptr, ptr, copySize);
+    mm_free(ptr);
+
     return newptr;
 }
