@@ -31,7 +31,7 @@ enum {
     WSIZE = 4,                                      // 4B: 헤더 또는 푸터 하나의 크기
     DSIZE = 8,                                      // 8B: 헤더와 푸터의 합
     MIN_BLOCK = DSIZE << 1,                         // 16B: 일반 블록의 최소 크기
-    CHUNKSIZE = 1 << 12                             // 4096B: 기본 힙 확장량
+    CHUNKSIZE = 1 << 9                              // 512B: 기본 힙 확장량
 };
 
 // 크기 비교: 더 큰 값을 반환
@@ -373,7 +373,7 @@ void *mm_realloc(void *ptr, size_t size)
         char *nextptr = NEXT_BLKP(ptr);
         if (lastp == nextptr)
         {
-            lastp = nextptr;
+            lastp = ptr;
         }
         
         size_t newsize = csize + GET_SIZE(HDRP(nextptr));
