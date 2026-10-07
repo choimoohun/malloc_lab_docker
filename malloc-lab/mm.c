@@ -47,6 +47,7 @@ static inline size_t ALIGN(size_t size)
 }
 
 static void *heap_listp = NULL; // 프롤로그의 bp를 가리키는 전역 스칼라 포인터
+static void *lastp = NULL;      // 마지막으로 탐색한 페이로드를 가리키는 전역 스칼라 포인터
 
 // ======================
 // 포인터가 가리키는 워드를 읽거나 쓰는 역할을 한다. (1워드 = 4바이트 기준)
@@ -126,7 +127,8 @@ static void *extend_heap(size_t bytes);
 int mm_init(void)
 {
     heap_listp = NULL;
-    char *base = mem_sbrk(4 * WSIZE);   // 패딩, 프롤로그, 에필로그의 영역 추가
+    lastp = NULL;
+    char *base = mem_sbrk(4 * WSIZE);   // 패딩, 프롤로그의 헤더와 푸터, 에필로그의 영역 추가
 
     if (base == (void *)-1)
     {
@@ -140,6 +142,7 @@ int mm_init(void)
 
     // heap_listp를 프롤로그의 헤더와 푸터 사이에 위치
     heap_listp = base + 2 * WSIZE;
+    lastp = heap_listp + DSIZE;
 
     if (extend_heap(CHUNKSIZE) == NULL)
     {
@@ -165,8 +168,12 @@ static void *coalesce(void *bp)
         {
             // Case 2: 앞은 할당되었고 뒤는 가용 상태인 경우
             size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
-            PUT(HDRP(bp), PACK(size, 0));   // 현재 헤더에 합친 크기 기록
-            PUT(FTRP(bp), PACK(size, 0));   // 새 헤더 크기로 계산한 푸터에 기록
+            if (lastp == NEXT_BLKP(bp))
+            {
+                lastp = bp;
+            }
+            PUT(HDRP(bp), PACK(size, 0));                       // 현재 헤더에 합친 크기 기록
+            PUT(FTRP(bp), PACK(size, 0));                       // 새 헤더 크기로 계산한 푸터에 기록
         }
     }
     else
@@ -175,18 +182,26 @@ static void *coalesce(void *bp)
         {
             // Case 3: 앞은 가용 상태이고 뒤는 할당 상태인 경우
             size += GET_SIZE(HDRP(PREV_BLKP(bp)));
-            PUT(FTRP(bp), PACK(size, 0));           // 기존 현재 블록의 푸터
-            PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));// 이전 블록의 헤더
-            bp = PREV_BLKP(bp);                     // 병합 결과의 첫 페이로드 주소
+            if (lastp == bp)
+            {
+                lastp = PREV_BLKP(bp);
+            }
+            PUT(FTRP(bp), PACK(size, 0));                       // 기존 현재 블록의 푸터
+            PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));            // 이전 블록의 헤더
+            bp = PREV_BLKP(bp);                                 // 병합 결과의 첫 페이로드 주소
         }
         else
         {
             // Case 4: 양쪽이 모두 가용 상태인 경우
             size += GET_SIZE(HDRP(PREV_BLKP(bp)));
             size += GET_SIZE(FTRP(NEXT_BLKP(bp)));
-            PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));    // 이전 블록의 헤더
-            PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));    // 다음 블록의 푸터
-            bp = PREV_BLKP(bp);                         // 병합 결과의 첫 페이로드 주소
+            if (lastp == bp || lastp == NEXT_BLKP(bp))
+            {
+                lastp = PREV_BLKP(bp);
+            }
+            PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));            // 이전 블록의 헤더
+            PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));            // 다음 블록의 푸터
+            bp = PREV_BLKP(bp);                                 // 병합 결과의 첫 페이로드 주소
         }
     }
     return bp;
@@ -217,19 +232,30 @@ static void *extend_heap(size_t bytes)
     return coalesce(bp);                    // 이전 블록과 병합한 결과 주소 반환
 }
 
-// 연습문제 9.8: first fit 검색을 수행하는 find_fit
+// first fit에서 수정: next fit 검색을 수행하는 find_fit
 static void *find_fit(size_t asize)
 {
-    void *bp = NEXT_BLKP(heap_listp); // 프롤로그 다음 블록부터 시작
+    void *bp = GET_SIZE(HDRP(lastp)) ? lastp : NEXT_BLKP(heap_listp);   // 마지막으로 탐색한 위치부터 시작
+    char trigger = 0;
 
-    // 에필로그는 크기가 0이므로 크기가 0일때까지 반복
-    while (GET_SIZE(HDRP(bp)))
+    while (true)
     {
+        // bp가 마지막으로 탐색한 블록에 도달하면 종료
+        if (bp == lastp && trigger)
+        {
+            break;
+        }
         if (!GET_ALLOC(HDRP(bp)) && GET_SIZE(HDRP(bp)) >= asize)
         {
+            lastp = bp;
             return bp;
         }
+        if (!GET_SIZE(HDRP(bp)))
+        {
+            bp = heap_listp;
+        }
         bp = NEXT_BLKP(bp);
+        trigger = 1;
     }
 
     return NULL;
