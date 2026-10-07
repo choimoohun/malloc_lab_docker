@@ -142,7 +142,7 @@ int mm_init(void)
 
     // heap_listp를 프롤로그의 헤더와 푸터 사이에 위치
     heap_listp = base + 2 * WSIZE;
-    lastp = heap_listp + DSIZE;
+    lastp = (char *)heap_listp + DSIZE;
 
     if (extend_heap(CHUNKSIZE) == NULL)
     {
@@ -353,10 +353,15 @@ void *mm_realloc(void *ptr, size_t size)
     // 2. 다음 블록이 가용 상태고, 합치기 충분하다면 제자리 확장
     else if (!GET_ALLOC(HDRP(NEXT_BLKP(ptr))) && (csize + GET_SIZE(HDRP(NEXT_BLKP(ptr)))) >= asize)
     {
-        char *next_block = NEXT_BLKP(ptr);
-        size_t newsize = csize + GET_SIZE(HDRP(next_block));
+        char *nextptr = NEXT_BLKP(ptr);
+        if (lastp == nextptr)
+        {
+            lastp = nextptr;
+        }
+        
+        size_t newsize = csize + GET_SIZE(HDRP(nextptr));
         PUT(HDRP(ptr), PACK(newsize, 1));
-        PUT(FTRP(next_block), PACK(newsize, 1));
+        PUT(FTRP(nextptr), PACK(newsize, 1));
         return ptr;
     }
     // 3. 그 다음 블록이 epilogue라면 heap을 확장해서 현재 블록을 늘리기
