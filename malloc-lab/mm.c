@@ -233,7 +233,7 @@ static void *extend_heap(size_t bytes)
 }
 
 // first fit에서 수정: next fit 검색을 수행하는 find_fit
-static void *find_fit(size_t asize)
+static void *next_fit(size_t asize)
 {
     void *bp = GET_SIZE(HDRP(lastp)) ? lastp : NEXT_BLKP(heap_listp);   // 마지막으로 탐색한 위치부터 시작
     char trigger = 0;
@@ -256,6 +256,24 @@ static void *find_fit(size_t asize)
         }
         bp = NEXT_BLKP(bp);
         trigger = 1;
+    }
+
+    return NULL;
+}
+
+// 연습문제 9.8: first fit 검색을 수행하는 find_fit
+static void *first_fit(size_t asize)
+{
+    void *bp = NEXT_BLKP(heap_listp); // 프롤로그 다음 블록부터 시작
+
+    // 에필로그는 크기가 0이므로 크기가 0일때까지 반복
+    while (GET_SIZE(HDRP(bp)))
+    {
+        if (!GET_ALLOC(HDRP(bp)) && GET_SIZE(HDRP(bp)) >= asize)
+        {
+            return bp;
+        }
+        bp = NEXT_BLKP(bp);
     }
 
     return NULL;
@@ -294,7 +312,7 @@ void *mm_malloc(size_t size)
     size_t asize = ALIGN(size);
     asize = MAX(MIN_BLOCK, asize);
     
-    void *bp = find_fit(asize);
+    void *bp = next_fit(asize);
 
     if (!bp)
     {
@@ -327,7 +345,6 @@ void mm_free(void *ptr)
 }
 
 // 제자리 할당과 주소 변경이 구현된 재할당
-// TODO: 재할당 과정에서 생기는 내부 단편화 해결해보기(언젠가)
 void *mm_realloc(void *ptr, size_t size)
 {
     if (ptr == NULL)
@@ -380,12 +397,20 @@ void *mm_realloc(void *ptr, size_t size)
         return ptr;
     }
 
-    // 주소 변경
-    void *newptr = mm_malloc(size);
+    // first fit으로 주소 변경 수행
+    void *newptr = first_fit(asize);
     if (!newptr)
     {
-        return NULL;
+        size_t extendsize = MAX(asize, CHUNKSIZE);
+        newptr = extend_heap(extendsize);   // 바이트 수를 전달
+    
+        if (!newptr)
+        {
+            return NULL;
+        }
     }
+
+    place(newptr, asize);
 
     size_t copySize = csize - DSIZE;    // 기존 블록의 페이로드 크기
     if (size < copySize)
